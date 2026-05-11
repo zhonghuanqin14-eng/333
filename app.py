@@ -4,13 +4,13 @@ from io import BytesIO
 
 # 页面配置
 st.set_page_config(
-    page_title="亚马逊物流比价系统",
+    page_title="渠道费用测算",
     page_icon="📦",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# 自定义CSS
+# 自定义CSS - 美化界面
 st.markdown("""
 <style>
     .main-header {
@@ -18,23 +18,29 @@ st.markdown("""
         font-weight: bold;
         color: #1f77b4;
         text-align: center;
-        margin-bottom: 2rem;
+        margin-bottom: 1.5rem;
     }
     .sub-header {
-        font-size: 1.5rem;
+        font-size: 1.3rem;
         font-weight: bold;
         color: #2c3e50;
         margin-top: 1rem;
-        margin-bottom: 1rem;
-        padding-bottom: 0.5rem;
+        margin-bottom: 0.8rem;
+        padding-bottom: 0.3rem;
         border-bottom: 2px solid #1f77b4;
     }
-    .result-box {
-        background-color: #f0f2f6;
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin-top: 1rem;
-        margin-bottom: 1rem;
+    .rate-card {
+        background-color: #f8f9fa;
+        padding: 0.6rem 0.8rem;
+        border-radius: 8px;
+        margin-top: 0.5rem;
+        margin-bottom: 0.8rem;
+        font-size: 0.85rem;
+        border-left: 3px solid #1f77b4;
+    }
+    .rate-card p {
+        margin: 0;
+        line-height: 1.4;
     }
     .best-channel {
         background-color: #27ae60;
@@ -42,38 +48,44 @@ st.markdown("""
         padding: 1rem;
         border-radius: 10px;
         text-align: center;
-        font-size: 1.3rem;
+        font-size: 1.2rem;
         font-weight: bold;
     }
-    .warehouse-card {
-        background-color: #f8f9fa;
+    .metric-card {
+        background-color: white;
         padding: 0.8rem;
         border-radius: 8px;
-        margin-bottom: 0.5rem;
-        border-left: 3px solid #1f77b4;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .small-input .stNumberInput > div > div > input {
+        padding: 0.3rem 0.5rem;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# 固定费率配置
+# ==================== 固定费率配置 ====================
+
 AMP_CONFIG = {
     "名称": "AMP单点",
     "报关费": 260,
-    "固定收费": 718.8,
+    "固定费": 718.8,
     "cbm单价": 1169.69,
+    "说明": "固定仓库：POC系列"
 }
 
 AGL_CONFIG = {
     "名称": "AGL五仓",
     "报关费": 260,
-    "固定收费": 434.8,
+    "固定费": 434.8,
     "美西单价": 597,
     "美东中单价": 557.6,
+    "说明": "固定：2个美西 + 3个美东/中"
 }
 
 NIUKU_CONFIG = {
     "报关费": 85,
-    "体积重系数": 183
+    "体积重系数": 183,
+    "说明": "按密度自动分配 kg/CBM"
 }
 
 # ==================== 数据处理函数 ====================
@@ -124,11 +136,11 @@ def load_niuku_rates(df):
     return rates
 
 def calculate_amp(cbm):
-    return AMP_CONFIG["报关费"] + AMP_CONFIG["固定收费"] + cbm * AMP_CONFIG["cbm单价"]
+    return AMP_CONFIG["报关费"] + AMP_CONFIG["固定费"] + cbm * AMP_CONFIG["cbm单价"]
 
 def calculate_agl(west_cbm, east_cbm):
     return (AGL_CONFIG["报关费"] * 5 + 
-            AGL_CONFIG["固定收费"] * 5 + 
+            AGL_CONFIG["固定费"] * 5 + 
             west_cbm * AGL_CONFIG["美西单价"] + 
             east_cbm * AGL_CONFIG["美东中单价"])
 
@@ -137,17 +149,17 @@ def calculate_niuku_by_warehouse(shipment_df, warehouse_data, rates):
     纽酷运费计算（按仓库分别传入CBM和重量）
     warehouse_data: [{"code": "LGB8", "cbm": 10, "weight": 500}, ...]
     """
+    if not warehouse_data:
+        return None, {"error": "未提供仓库数据"}
+    
     total_warehouse_count = len(warehouse_data)
     fixed_fee = NIUKU_CONFIG["报关费"] * total_warehouse_count
     
     total_cbm_freight = 0
     total_kg_freight = 0
-    all_cbm_products = []
-    all_kg_products = []
-    
     warehouse_details = []
     
-    for i, wh in enumerate(warehouse_data):
+    for wh in warehouse_data:
         code = wh["code"].upper()
         wh_cbm = wh.get("cbm", 0)
         wh_weight = wh.get("weight", 0)
@@ -158,7 +170,7 @@ def calculate_niuku_by_warehouse(shipment_df, warehouse_data, rates):
         kg_rate = rates[code]["kg"]
         cbm_rate = rates[code]["cbm"]
         
-        # 判断这批货的密度决定走kg还是CBM
+        # 判断密度决定计费方式
         density = wh_weight / wh_cbm if wh_cbm > 0 else 0
         volume_weight = wh_cbm * NIUKU_CONFIG["体积重系数"]
         chargeable_weight = max(wh_weight, volume_weight)
@@ -167,88 +179,42 @@ def calculate_niuku_by_warehouse(shipment_df, warehouse_data, rates):
             # 重货：走CBM
             freight = wh_cbm * cbm_rate
             total_cbm_freight += freight
-            all_cbm_products.append({
+            warehouse_details.append({
                 "仓库": code,
                 "CBM": wh_cbm,
-                "重量": wh_weight,
-                "密度": density,
+                "重量(kg)": wh_weight,
+                "密度": round(density, 1),
                 "计费方式": "CBM",
+                "计费量": wh_cbm,
                 "单价": cbm_rate,
-                "运费": freight
+                "运费": round(freight, 2)
             })
         else:
             # 抛货：走kg
             freight = chargeable_weight * kg_rate
             total_kg_freight += freight
-            all_kg_products.append({
+            warehouse_details.append({
                 "仓库": code,
                 "CBM": wh_cbm,
-                "重量": wh_weight,
-                "体积重": volume_weight,
-                "计费重量": chargeable_weight,
-                "密度": density,
+                "重量(kg)": wh_weight,
+                "体积重(kg)": round(volume_weight, 1),
+                "计费重量(kg)": round(chargeable_weight, 1),
+                "密度": round(density, 1),
                 "计费方式": "kg",
+                "计费量": chargeable_weight,
                 "单价": kg_rate,
-                "运费": freight
+                "运费": round(freight, 2)
             })
-        
-        warehouse_details.append({
-            "仓库": code,
-            "CBM": wh_cbm,
-            "重量": wh_weight,
-            "密度": round(density, 1),
-            "计费方式": "CBM" if density > NIUKU_CONFIG["体积重系数"] else "kg",
-            "运费": round(freight, 2)
-        })
     
     total_freight = fixed_fee + total_cbm_freight + total_kg_freight
     
-    # 生成产品级明细（需要原始产品数据）
-    product_details = []
-    for _, row in shipment_df.iterrows():
-        product_name = row['product_name']
-        cbm = row['cbm']
-        weight = row['weight_kg']
-        density = weight / cbm if cbm > 0 else 0
-        
-        if density > NIUKU_CONFIG["体积重系数"]:
-            product_details.append({
-                "产品名称": product_name,
-                "CBM": cbm,
-                "重量(kg)": weight,
-                "密度(kg/m³)": round(density, 1),
-                "分配仓库": "按比例分配",
-                "计费方式": "CBM",
-                "计费量": cbm,
-                "运费": cbm * (rates.get(warehouse_data[0]["code"], {}).get("cbm", 0)) if warehouse_data else 0
-            })
-        else:
-            volume_weight = cbm * NIUKU_CONFIG["体积重系数"]
-            chargeable = max(weight, volume_weight)
-            product_details.append({
-                "产品名称": product_name,
-                "CBM": cbm,
-                "重量(kg)": weight,
-                "体积重(kg)": round(volume_weight, 1),
-                "计费重量(kg)": round(chargeable, 1),
-                "密度(kg/m³)": round(density, 1),
-                "分配仓库": "按比例分配",
-                "计费方式": "kg",
-                "计费量": chargeable,
-                "运费": chargeable * (rates.get(warehouse_data[0]["code"], {}).get("kg", 0)) if warehouse_data else 0
-            })
-    
     detail = {
-        "warehouses": [wh["code"] for wh in warehouse_data],
         "warehouse_count": total_warehouse_count,
         "fixed_fee": fixed_fee,
         "total_cbm_freight": total_cbm_freight,
         "total_kg_freight": total_kg_freight,
         "total_freight": total_freight,
-        "warehouse_details": warehouse_details,
-        "product_details": product_details,
-        "cbm_products_count": len(all_cbm_products),
-        "kg_products_count": len(all_kg_products)
+        "warehouse_details": warehouse_details
     }
     
     return total_freight, detail
@@ -259,17 +225,10 @@ def export_detail_excel(detail, channel_name):
     """导出明细到Excel"""
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # 仓库汇总
         if detail.get("warehouse_details"):
             df_warehouse = pd.DataFrame(detail["warehouse_details"])
             df_warehouse.to_excel(writer, sheet_name="仓库明细", index=False)
         
-        # 产品分组
-        if detail.get("product_details"):
-            df_products = pd.DataFrame(detail["product_details"])
-            df_products.to_excel(writer, sheet_name="产品明细", index=False)
-        
-        # 费用汇总
         summary = pd.DataFrame([
             ["固定报关费", detail.get("fixed_fee", 0)],
             ["CBM部分运费", detail.get("total_cbm_freight", 0)],
@@ -314,12 +273,22 @@ st.markdown("---")
 
 st.markdown('<div class="sub-header">🏭 3. 输入发货数据</div>', unsafe_allow_html=True)
 
-# AMP 和 AGL 两列
-col_amp, col_agl = st.columns(2)
+# 三列布局
+col_amp, col_agl, col_niuku = st.columns(3)
 
+# ========== AMP ==========
 with col_amp:
     st.markdown("#### 🇦 AMP 单点")
-    st.caption("固定仓库：POC系列")
+    with st.container():
+        st.markdown(f"""
+        <div class="rate-card">
+            <p>📋 报关费：¥{AMP_CONFIG['报关费']:.0f}</p>
+            <p>📋 固定费：¥{AMP_CONFIG['固定费']:.1f}</p>
+            <p>📦 CBM单价：¥{AMP_CONFIG['cbm单价']:.2f}</p>
+            <p style="color:#666; font-size:0.75rem;">🏭 固定仓库：POC系列</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
     amp_cbm = st.number_input(
         "总CBM（方数）",
         min_value=0.0,
@@ -329,82 +298,115 @@ with col_amp:
         key="amp_input"
     )
 
+# ========== AGL ==========
 with col_agl:
     st.markdown("#### 🇧 AGL 五仓")
-    st.caption("固定仓库：2个美西 + 3个美东/中")
+    with st.container():
+        st.markdown(f"""
+        <div class="rate-card">
+            <p>📋 报关费：¥{AGL_CONFIG['报关费']:.0f} × 5 = ¥{AGL_CONFIG['报关费']*5:.0f}</p>
+            <p>📋 固定费：¥{AGL_CONFIG['固定费']:.1f} × 5 = ¥{AGL_CONFIG['固定费']*5:.1f}</p>
+            <p>🗺️ 美西仓库：¥{AGL_CONFIG['美西单价']:.2f}/CBM</p>
+            <p>🗺️ 美东/中：¥{AGL_CONFIG['美东中单价']:.2f}/CBM</p>
+            <p style="color:#666; font-size:0.75rem;">🏭 固定：2个美西 + 3个美东/中</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     col_west, col_east = st.columns(2)
     with col_west:
-        agl_west = st.number_input("美西CBM", min_value=0.0, step=0.5, key="agl_west")
+        agl_west = st.number_input("美西CBM", min_value=0.0, step=0.5, key="agl_west", format="%.2f")
     with col_east:
-        agl_east = st.number_input("美东/中CBM", min_value=0.0, step=0.5, key="agl_east")
+        agl_east = st.number_input("美东/中CBM", min_value=0.0, step=0.5, key="agl_east", format="%.2f")
+
+# ========== 纽酷 ==========
+with col_niuku:
+    st.markdown("#### 🇨 纽酷")
+    with st.container():
+        st.markdown(f"""
+        <div class="rate-card">
+            <p>📋 报关费：¥{NIUKU_CONFIG['报关费']:.0f} × 仓库数</p>
+            <p>⚖️ 体积重系数：1 CBM = {NIUKU_CONFIG['体积重系数']} kg</p>
+            <p>🔄 计费规则：密度 > {NIUKU_CONFIG['体积重系数']} → CBM，否则 → kg</p>
+            <p style="color:#666; font-size:0.75rem;">💰 单价从报价表自动匹配</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-# ==================== 纽酷输入 ====================
+# ==================== 纽酷输入区域 ====================
 
-st.markdown("#### 🇨 纽酷五仓（5个仓库）")
-st.caption("请根据亚马逊实际分配的仓库，输入每个仓库的代码、CBM和总重量")
+st.markdown('<div class="sub-header">🇨 3.1 纽酷仓库明细</div>', unsafe_allow_html=True)
+st.caption("根据亚马逊实际分配的仓库，输入每个仓库的代码、CBM和总重量")
 
-# 创建表头，确保对齐
-header_cols = st.columns([1.5, 1, 1])
-with header_cols[0]:
-    st.markdown("**仓库代码**")
-with header_cols[1]:
-    st.markdown("**CBM (m³)**")
-with header_cols[2]:
-    st.markdown("**总重量 (kg)**")
+# 纽酷类型选择
+niuku_type = st.radio(
+    "选择配送方式",
+    ["五仓（5个仓库）", "单点（1个仓库）"],
+    horizontal=True,
+    key="niuku_type"
+)
 
 niuku_warehouse_data = []
-for i in range(5):
-    # 每一行都使用相同的列宽比例，确保对齐
-    cols = st.columns([1.5, 1, 1])
-    with cols[0]:
-        code = st.text_input(
-            "仓库代码", 
-            placeholder=f"例: LGB8", 
-            key=f"wh_code_{i}",
-            label_visibility="collapsed"
-        )
-    with cols[1]:
-        cbm = st.number_input(
-            "CBM", 
-            min_value=0.0, 
-            step=0.1, 
-            format="%.2f", 
-            key=f"wh_cbm_{i}",
-            label_visibility="collapsed"
-        )
-    with cols[2]:
-        weight = st.number_input(
-            "重量(kg)", 
-            min_value=0.0, 
-            step=10.0, 
-            key=f"wh_weight_{i}",
-            label_visibility="collapsed"
-        )
-    
-    if code:
-        niuku_warehouse_data.append({
-            "code": code.strip().upper(),
-            "cbm": cbm,
-            "weight": weight
-        })
 
-    if len(niuku_warehouse_data) == 5:
-        st.success("✅ 已输入5个仓库")
-    elif niuku_warehouse_data:
-        st.warning(f"⚠️ 还需要 {5 - len(niuku_warehouse_data)} 个仓库")
+if niuku_type == "五仓（5个仓库）":
+    # 表头 - 使用更紧凑的比例
+    st.markdown("---")
+    h1, h2, h3 = st.columns([1.2, 0.8, 0.8])
+    with h1: st.markdown("**仓库代码**")
+    with h2: st.markdown("**CBM (m³)**")
+    with h3: st.markdown("**重量 (kg)**")
+    st.markdown("---")
+    
+    for i in range(5):
+        cols = st.columns([1.2, 0.8, 0.8])
+        with cols[0]:
+            code = st.text_input(
+                "", 
+                placeholder=f"例: LGB8", 
+                key=f"wh_code_{i}",
+                label_visibility="collapsed"
+            )
+        with cols[1]:
+            cbm = st.number_input(
+                "", 
+                min_value=0.0, 
+                step=0.5, 
+                format="%.2f", 
+                key=f"wh_cbm_{i}",
+                label_visibility="collapsed"
+            )
+        with cols[2]:
+            weight = st.number_input(
+                "", 
+                min_value=0.0, 
+                step=10.0, 
+                format="%.0f",
+                key=f"wh_weight_{i}",
+                label_visibility="collapsed"
+            )
+        
+        if code and code.strip():
+            niuku_warehouse_data.append({
+                "code": code.strip().upper(),
+                "cbm": cbm,
+                "weight": weight
+            })
 
 else:  # 单点
-    st.markdown("##### 请输入仓库详细信息")
-    col_code, col_cbm, col_weight = st.columns([2, 1, 1])
-    with col_code:
-        code = st.text_input("仓库代码", placeholder="如 LGB8", key="single_code")
-    with col_cbm:
-        single_cbm = st.number_input("CBM", min_value=0.0, step=0.1, key="single_cbm")
-    with col_weight:
-        single_weight = st.number_input("重量(kg)", min_value=0.0, step=10.0, key="single_weight")
+    st.markdown("---")
+    h1, h2, h3 = st.columns([1.2, 0.8, 0.8])
+    with h1: st.markdown("**仓库代码**")
+    with h2: st.markdown("**CBM (m³)**")
+    with h3: st.markdown("**重量 (kg)**")
+    st.markdown("---")
+    
+    cols = st.columns([1.2, 0.8, 0.8])
+    with cols[0]:
+        code = st.text_input("", placeholder="例: LGB8", key="single_code", label_visibility="collapsed")
+    with cols[1]:
+        single_cbm = st.number_input("", min_value=0.0, step=0.5, format="%.2f", key="single_cbm", label_visibility="collapsed")
+    with cols[2]:
+        single_weight = st.number_input("", min_value=0.0, step=10.0, format="%.0f", key="single_weight", label_visibility="collapsed")
     
     if code:
         niuku_warehouse_data.append({
@@ -417,7 +419,7 @@ st.markdown("---")
 
 # ==================== 比价按钮 ====================
 
-center_col, _, _ = st.columns([2, 3, 2])
+center_col, _, _ = st.columns([1, 2, 1])
 with center_col:
     calculate_btn = st.button(
         "🚀 开始比价", 
@@ -434,7 +436,17 @@ if calculate_btn:
         errors.append("请上传发货计划Excel")
     if not niuku_file:
         errors.append("请上传纽酷报价Excel")
-    if amp_cbm == 0 and agl_west == 0 and agl_east == 0 and not niuku_warehouse_data:
+    
+    # 检查至少有一个渠道有数据
+    has_data = False
+    if amp_cbm > 0:
+        has_data = True
+    if agl_west > 0 or agl_east > 0:
+        has_data = True
+    if niuku_warehouse_data:
+        has_data = True
+    
+    if not has_data:
         errors.append("请至少输入一个渠道的发货数据")
     
     if errors:
@@ -454,12 +466,12 @@ if calculate_btn:
         # 处理数据
         shipment_df = read_shipment_plan(shipment_df_raw)
         if shipment_df.empty:
-            st.warning("⚠️ 发货计划中没有找到美国产品")
+            st.warning("⚠️ 发货计划中没有找到美国产品，请检查'国家'列")
             st.stop()
         
         niuku_rates = load_niuku_rates(niuku_df_raw)
         if not niuku_rates:
-            st.warning("⚠️ 纽酷报价表为空")
+            st.warning("⚠️ 纽酷报价表为空，请检查Excel格式")
             st.stop()
         
         # 计算各渠道运费
@@ -477,15 +489,15 @@ if calculate_btn:
         
         # 纽酷
         if niuku_warehouse_data:
-            total_cbm = sum(wh["cbm"] for wh in niuku_warehouse_data)
-            total_weight = sum(wh["weight"] for wh in niuku_warehouse_data)
-            
-            if total_cbm > 0 and total_weight > 0:
+            # 验证纽酷数据完整性
+            valid_warehouses = [w for w in niuku_warehouse_data if w["code"] and w["cbm"] > 0 and w["weight"] > 0]
+            if valid_warehouses:
                 niuku_freight, niuku_detail = calculate_niuku_by_warehouse(
-                    shipment_df, niuku_warehouse_data, niuku_rates
+                    shipment_df, valid_warehouses, niuku_rates
                 )
                 if niuku_detail and "error" not in niuku_detail:
-                    results.append((niuku_type, niuku_freight, niuku_detail))
+                    channel_name = niuku_type
+                    results.append((channel_name, niuku_freight, niuku_detail))
                 elif niuku_detail and "error" in niuku_detail:
                     st.warning(f"纽酷: {niuku_detail['error']}")
         
@@ -507,7 +519,7 @@ if calculate_btn:
         </div>
         """, unsafe_allow_html=True)
         
-        # 各渠道对比
+        # 各渠道对比表格
         st.markdown("### 渠道对比")
         compare_data = []
         for name, freight, _ in results:
@@ -536,11 +548,6 @@ if calculate_btn:
                 with st.expander("🏢 仓库明细", expanded=True):
                     df_warehouse = pd.DataFrame(detail['warehouse_details'])
                     st.dataframe(df_warehouse, use_container_width=True, hide_index=True)
-                
-                # 产品分组明细表
-                with st.expander("📋 产品分组明细（CBM组 vs kg组）", expanded=True):
-                    df_products = pd.DataFrame(detail['product_details'])
-                    st.dataframe(df_products, use_container_width=True, hide_index=True)
                     
                     # 下载按钮
                     excel_file = export_detail_excel(detail, name)
@@ -565,10 +572,10 @@ if calculate_btn:
             with col3:
                 st.metric("平均密度", f"{avg_density:.1f} kg/m³")
             
-            st.caption("📌 密度 > 183 kg/m³ 为重货，建议走CBM计费；反之走kg计费")
+            st.caption(f"📌 密度 > {NIUKU_CONFIG['体积重系数']} kg/m³ 为重货，走CBM计费；反之走kg计费")
 
 elif not calculate_btn:
     st.info("👆 请先上传文件并输入发货数据，然后点击「开始比价」")
 
 st.markdown("---")
-st.caption("📌 说明：纽酷需要输入每个仓库的CBM和重量，系统会自动判断重货走CBM、抛货走kg，并生成明细表下载")
+st.caption("📌 说明：AMP和AGL仓库固定；纽酷需输入实际分配的仓库代码、CBM和重量，系统自动判断重货走CBM、抛货走kg")
