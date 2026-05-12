@@ -3,7 +3,7 @@ import pandas as pd
 
 # 页面配置
 st.set_page_config(
-    page_title="亚马逊物流比价系统",
+    page_title="渠道费用测算",
     page_icon="📦",
     layout="wide",
     initial_sidebar_state="collapsed"
