@@ -3,7 +3,7 @@ import pandas as pd
 
 # 页面配置
 st.set_page_config(
-    page_title="渠道费用测算",
+    page_title="亚马逊物流比价系统",
     page_icon="📦",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -319,7 +319,7 @@ def calculate_send_1(cbm, weight, inbound_fee_usd):
 
 # ==================== 主界面 ====================
 
-st.markdown('<div class="main-header">渠道费用测算</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">📦 亚马逊物流比价系统</div>', unsafe_allow_html=True)
 
 # 顶部费率卡片（折叠）
 col_rate1, col_rate2, col_rate3 = st.columns(3)
@@ -545,15 +545,19 @@ if calculate_btn:
         })
     st.dataframe(pd.DataFrame(compare_data), use_container_width=True, hide_index=True)
     
-    # send五仓明细（简化版）
+    # send五仓明细 - 固定费用和总运费同一行显示
     for name, freight, details, fixed_fee, _ in results:
         if name == "send五仓" and details:
             st.markdown(f"**📋 {name} 费用明细**")
             
-            # 显示固定报关费
-            st.metric("固定报关费", f"¥{fixed_fee:.2f}")
+            # 固定费用和总运费放在同一行
+            col_fixed, col_total = st.columns(2)
+            with col_fixed:
+                st.metric("固定报关费", f"¥{fixed_fee:.2f}")
+            with col_total:
+                st.metric("总运费", f"¥{freight:.2f}")
             
-            # 简化表格：只显示仓库、重量、体积重、计费方式、运费
+            # 简化表格
             df_simple = pd.DataFrame([{
                 "仓库": d["仓库"],
                 "重量(kg)": d["重量(kg)"],
@@ -563,11 +567,8 @@ if calculate_btn:
             } for d in details])
             
             st.dataframe(df_simple, use_container_width=True, hide_index=True)
-            
-            # 总运费
-            st.metric("总运费", f"¥{freight:.2f}")
     
-    # send单点明细（简化版）
+    # send单点明细
     for name, freight, _, fixed_fee, extra in results:
         if name == "send单点" and extra:
             detail, inbound_fee = extra
