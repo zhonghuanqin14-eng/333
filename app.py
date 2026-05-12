@@ -3,8 +3,7 @@ import pandas as pd
 
 # 页面配置
 st.set_page_config(
-    page_title="亚马逊物流比价系统",
-    page_icon="📦",
+    page_title="渠道费用测算",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -319,7 +318,7 @@ def calculate_send_1(cbm, weight, inbound_fee_usd):
 
 # ==================== 主界面 ====================
 
-st.markdown('<div class="main-header">📦 亚马逊物流比价系统</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">渠道费用测算</div>', unsafe_allow_html=True)
 
 # 顶部费率卡片（折叠）
 col_rate1, col_rate2, col_rate3 = st.columns(3)
