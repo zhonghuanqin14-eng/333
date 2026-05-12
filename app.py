@@ -23,22 +23,27 @@ st.markdown("""
         font-size: 1.2rem;
         font-weight: bold;
         color: #2c3e50;
-        margin-top: 1rem;
-        margin-bottom: 0.8rem;
+        margin-top: 1.5rem;
+        margin-bottom: 1rem;
         padding-bottom: 0.3rem;
         border-bottom: 2px solid #1f77b4;
     }
     .rate-card {
         background-color: #f8f9fa;
-        padding: 0.5rem 0.8rem;
-        border-radius: 6px;
-        margin-top: 0.3rem;
-        margin-bottom: 0.5rem;
+        padding: 0.8rem;
+        border-radius: 8px;
+        height: 100%;
         font-size: 0.8rem;
         border-left: 3px solid #1f77b4;
     }
     .rate-card p {
-        margin: 2px 0;
+        margin: 4px 0;
+    }
+    .rate-card-title {
+        font-weight: bold;
+        font-size: 1rem;
+        margin-bottom: 8px;
+        color: #1f77b4;
     }
     .best-channel {
         background-color: #27ae60;
@@ -49,13 +54,24 @@ st.markdown("""
         font-size: 1.2rem;
         font-weight: bold;
     }
-    .fee-hint {
-        font-size: 0.7rem;
-        color: #888;
-        margin-top: 0.2rem;
+    .warehouse-row {
+        margin-bottom: 1rem;
     }
+    .warehouse-label {
+        font-weight: 500;
+        margin-bottom: 0.3rem;
+        color: #333;
+    }
+    /* 输入框宽度统一 */
     .stNumberInput > div {
         width: 100px !important;
+    }
+    .stNumberInput {
+        display: inline-block;
+    }
+    /* 仓库行内居中对齐 */
+    .warehouse-col {
+        text-align: center;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -83,8 +99,8 @@ AGL_WAREHOUSES = [
 ]
 
 AGL_CONFIG = {
-    "报关费": 260,  # 每个仓
-    "固定费": 434.8,  # 每个仓
+    "报关费": 260,
+    "固定费": 434.8,
     "warehouses": AGL_WAREHOUSES
 }
 
@@ -110,26 +126,20 @@ SEND1_CONFIG = {
     "warehouse": {"name": "GEU2", "kg单价": 4.7, "cbm单价": 706}
 }
 
-# 通用配置
-VOLUME_WEIGHT_RATIO = 183  # 1 CBM = 183 kg
+VOLUME_WEIGHT_RATIO = 183
 
 # ==================== 计算函数 ====================
 
 def calculate_amp(cbm):
-    """计算AMP总运费"""
     return AMP_CONFIG["报关费"] + AMP_CONFIG["固定费"] + cbm * AMP_CONFIG["cbm单价"]
 
 def calculate_agl(cbm_list):
-    """计算AGL总运费，cbm_list按仓库顺序传入"""
     freight_cbm = 0
     for i, wh in enumerate(AGL_WAREHOUSES):
         freight_cbm += cbm_list[i] * wh["cbm单价"]
-    
-    total = (AGL_CONFIG["报关费"] * 5) + (AGL_CONFIG["固定费"] * 5) + freight_cbm
-    return total
+    return (AGL_CONFIG["报关费"] * 5) + (AGL_CONFIG["固定费"] * 5) + freight_cbm
 
 def calculate_send_5(cbm_list, weight_list):
-    """计算send五仓总运费，按每个仓库密度独立判断计费方式"""
     total_freight = 0
     warehouse_details = []
     
@@ -152,7 +162,6 @@ def calculate_send_5(cbm_list, weight_list):
         volume_weight = cbm * VOLUME_WEIGHT_RATIO
         
         if density > VOLUME_WEIGHT_RATIO:
-            # 重货：走CBM
             freight = cbm * wh["cbm单价"]
             warehouse_details.append({
                 "仓库": wh["name"],
@@ -165,7 +174,6 @@ def calculate_send_5(cbm_list, weight_list):
                 "运费": round(freight, 2)
             })
         else:
-            # 抛货：走kg
             chargeable_weight = max(weight, volume_weight)
             freight = chargeable_weight * wh["kg单价"]
             warehouse_details.append({
@@ -185,13 +193,10 @@ def calculate_send_5(cbm_list, weight_list):
     
     fixed_fee = SEND5_CONFIG["报关费"] * 5
     total_freight += fixed_fee
-    
     return total_freight, warehouse_details, fixed_fee
 
 def calculate_send_1(cbm, weight, inbound_fee_usd):
-    """计算send单点总运费"""
     inbound_fee_cny = inbound_fee_usd * USD_TO_CNY
-    
     wh = SEND1_CONFIG["warehouse"]
     density = weight / cbm if cbm > 0 else 0
     volume_weight = cbm * VOLUME_WEIGHT_RATIO
@@ -226,53 +231,56 @@ def calculate_send_1(cbm, weight, inbound_fee_usd):
     
     fixed_fee = SEND1_CONFIG["报关费"]
     total_freight = fixed_fee + freight + inbound_fee_cny
-    
     return total_freight, detail, fixed_fee, inbound_fee_cny
 
-# ==================== 主界面 ====================
+# ==================== 顶部费率卡片 ====================
 
-st.markdown('<div class="main-header">亚马逊物流比价系统</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">渠道费用测算</div>', unsafe_allow_html=True)
 
-# 汇率提示
-st.info(f"💱 美元兑人民币汇率: 1 USD = {USD_TO_CNY} CNY")
+col_rate1, col_rate2, col_rate3 = st.columns(3)
 
-st.markdown("---")
-
-# ==================== AMP + AGL 费率卡片 ====================
-
-st.markdown('<div class="sub-header">1. AMP 及 AGL 费率</div>', unsafe_allow_html=True)
-
-col_amp, col_agl = st.columns(2)
-
-with col_amp:
-    st.markdown("**AMP 单点**")
+with col_rate1:
     st.markdown(f"""
     <div class="rate-card">
+        <div class="rate-card-title">AMP 单点</div>
         <p>报关费: ¥{AMP_CONFIG['报关费']:.0f}</p>
         <p>固定费: ¥{AMP_CONFIG['固定费']:.1f}</p>
         <p>CBM单价: ¥{AMP_CONFIG['cbm单价']:.2f}</p>
-        <p class="fee-hint">仓库: {AMP_CONFIG['仓库']}</p>
+        <p>仓库: {AMP_CONFIG['仓库']}</p>
     </div>
     """, unsafe_allow_html=True)
 
-with col_agl:
-    st.markdown("**AGL 五仓**")
-    agl_fee_summary = f"""
+with col_rate2:
+    agl_text = f"""
     <div class="rate-card">
+        <div class="rate-card-title">AGL 五仓</div>
         <p>报关费: ¥{AGL_CONFIG['报关费']:.0f} × 5 = ¥{AGL_CONFIG['报关费']*5:.0f}</p>
         <p>固定费: ¥{AGL_CONFIG['固定费']:.1f} × 5 = ¥{AGL_CONFIG['固定费']*5:.1f}</p>
-        <p>CBM单价: </p>
+        <p>CBM单价:</p>
     """
     for wh in AGL_WAREHOUSES:
-        agl_fee_summary += f"<p style='margin-left:1rem;'>• {wh['name']}: ¥{wh['cbm单价']:.1f}</p>"
-    agl_fee_summary += "</div>"
-    st.markdown(agl_fee_summary, unsafe_allow_html=True)
+        agl_text += f"<p style='margin-left:1rem;'>• {wh['name']}: ¥{wh['cbm单价']:.1f}</p>"
+    agl_text += "</div>"
+    st.markdown(agl_text, unsafe_allow_html=True)
+
+with col_rate3:
+    send_text = f"""
+    <div class="rate-card">
+        <div class="rate-card-title">send 服务</div>
+        <p>报关费: ¥{SEND5_CONFIG['报关费']:.0f} × 仓库数</p>
+        <p>固定费: ¥0</p>
+        <p>计费规则: 密度 > {VOLUME_WEIGHT_RATIO} → CBM，否则 → kg</p>
+        <p>体积重系数: 1 CBM = {VOLUME_WEIGHT_RATIO} kg</p>
+        <p class="fee-hint">单点额外 + 入库配置费(USD×7)</p>
+    </div>
+    """
+    st.markdown(send_text, unsafe_allow_html=True)
 
 st.markdown("---")
 
 # ==================== AMP 输入 ====================
 
-st.markdown('<div class="sub-header">2. AMP 输入</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">AMP 输入</div>', unsafe_allow_html=True)
 
 col_left, col_center, col_right = st.columns([1, 1, 1])
 with col_center:
@@ -288,22 +296,20 @@ st.markdown("---")
 
 # ==================== AGL 输入 ====================
 
-st.markdown('<div class="sub-header">3. AGL 输入</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">AGL 输入</div>', unsafe_allow_html=True)
 st.caption("输入每个仓库的CBM")
 
-# 表头
-col_h1, col_h2 = st.columns([0.6, 0.6])
-with col_h1:
-    st.markdown("**仓库代码**")
-with col_h2:
-    st.markdown("**CBM**")
+# 仓库名横排
+cols_name = st.columns(len(AGL_WAREHOUSES))
+for i, wh in enumerate(AGL_WAREHOUSES):
+    with cols_name[i]:
+        st.markdown(f"<div style='text-align:center; font-weight:bold;'>{wh['name']}</div>", unsafe_allow_html=True)
 
+# 输入框竖在下面
+cols_input = st.columns(len(AGL_WAREHOUSES))
 agl_cbm_list = []
-for wh in AGL_WAREHOUSES:
-    cols = st.columns([0.6, 0.6])
-    with cols[0]:
-        st.markdown(f"{wh['name']}")
-    with cols[1]:
+for i, wh in enumerate(AGL_WAREHOUSES):
+    with cols_input[i]:
         cbm = st.number_input(
             "", 
             min_value=0.0, 
@@ -318,25 +324,21 @@ st.markdown("---")
 
 # ==================== send 五仓输入 ====================
 
-st.markdown('<div class="sub-header">4. send 五仓输入</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">send 五仓输入</div>', unsafe_allow_html=True)
 st.caption("输入每个仓库的CBM和重量，系统自动判断走CBM还是kg")
 
-# 表头
-col_h1, col_h2, col_h3 = st.columns([0.6, 0.6, 0.6])
-with col_h1:
-    st.markdown("**仓库代码**")
-with col_h2:
-    st.markdown("**CBM**")
-with col_h3:
-    st.markdown("**重量(kg)**")
+# 仓库名横排（两行：第一行仓库名，第二行标注CBM/重量）
+cols_name = st.columns(len(SEND5_WAREHOUSES))
+for i, wh in enumerate(SEND5_WAREHOUSES):
+    with cols_name[i]:
+        st.markdown(f"<div style='text-align:center; font-weight:bold;'>{wh['name']}</div>", unsafe_allow_html=True)
 
+# CBM输入行
+cols_cbm = st.columns(len(SEND5_WAREHOUSES))
 send5_cbm_list = []
-send5_weight_list = []
-for wh in SEND5_WAREHOUSES:
-    cols = st.columns([0.6, 0.6, 0.6])
-    with cols[0]:
-        st.markdown(f"{wh['name']}")
-    with cols[1]:
+for i, wh in enumerate(SEND5_WAREHOUSES):
+    with cols_cbm[i]:
+        st.markdown("<div style='text-align:center; font-size:0.7rem; color:#666;'>CBM</div>", unsafe_allow_html=True)
         cbm = st.number_input(
             "", 
             min_value=0.0, 
@@ -346,7 +348,13 @@ for wh in SEND5_WAREHOUSES:
             label_visibility="collapsed"
         )
         send5_cbm_list.append(cbm)
-    with cols[2]:
+
+# 重量输入行
+cols_weight = st.columns(len(SEND5_WAREHOUSES))
+send5_weight_list = []
+for i, wh in enumerate(SEND5_WAREHOUSES):
+    with cols_weight[i]:
+        st.markdown("<div style='text-align:center; font-size:0.7rem; color:#666;'>重量(kg)</div>", unsafe_allow_html=True)
         weight = st.number_input(
             "", 
             min_value=0.0, 
@@ -361,21 +369,16 @@ st.markdown("---")
 
 # ==================== send 单点输入 ====================
 
-st.markdown('<div class="sub-header">5. send 单点输入</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">send 单点输入</div>', unsafe_allow_html=True)
 st.caption("输入仓库数据及入库配置费（美元）")
 
-col_h1, col_h2, col_h3 = st.columns([0.6, 0.6, 0.6])
-with col_h1:
-    st.markdown("**仓库代码**")
-with col_h2:
-    st.markdown("**CBM**")
-with col_h3:
-    st.markdown("**重量(kg)**")
+# 仓库名
+st.markdown("<div style='text-align:center; font-weight:bold; margin-bottom:0.5rem;'>GEU2</div>", unsafe_allow_html=True)
 
-cols = st.columns([0.6, 0.6, 0.6])
-with cols[0]:
-    st.markdown("GEU2")
-with cols[1]:
+# CBM和重量两列
+col_cbm, col_weight = st.columns(2)
+with col_cbm:
+    st.markdown("<div style='text-align:center; font-size:0.7rem; color:#666;'>CBM</div>", unsafe_allow_html=True)
     send1_cbm = st.number_input(
         "", 
         min_value=0.0, 
@@ -384,7 +387,8 @@ with cols[1]:
         key="send1_cbm",
         label_visibility="collapsed"
     )
-with cols[2]:
+with col_weight:
+    st.markdown("<div style='text-align:center; font-size:0.7rem; color:#666;'>重量(kg)</div>", unsafe_allow_html=True)
     send1_weight = st.number_input(
         "", 
         min_value=0.0, 
@@ -394,32 +398,18 @@ with cols[2]:
         label_visibility="collapsed"
     )
 
-st.markdown("**入库配置费**")
+# 入库配置费
+st.markdown("<div style='margin-top:1rem;'><b>入库配置费</b> (USD × 7 = CNY)</div>", unsafe_allow_html=True)
 col_left, col_center, col_right = st.columns([1, 1, 1])
 with col_center:
     send1_inbound_usd = st.number_input(
-        "入库配置费（美元）",
+        "美元金额",
         min_value=0.0,
         step=50.0,
         format="%.0f",
         key="send1_inbound",
         label_visibility="collapsed"
     )
-st.caption(f"将自动按汇率 {USD_TO_CNY} 换算为人民币")
-
-st.markdown("---")
-
-# ==================== send 计费规则说明 ====================
-
-with st.expander("send 计费规则说明"):
-    st.markdown(f"""
-    - 报关费: ¥85 × 仓库数
-    - 体积重系数: 1 CBM = {VOLUME_WEIGHT_RATIO} kg
-    - 计费规则: 每个仓库独立判断
-    - 密度 > {VOLUME_WEIGHT_RATIO} kg/m³ → 按CBM计费
-    - 密度 ≤ {VOLUME_WEIGHT_RATIO} kg/m³ → 按kg计费，计费重量 = MAX(实际重量, 体积重)
-    - 单点额外费用: 入库配置费 (美元) × {USD_TO_CNY}
-    """)
 
 st.markdown("---")
 
@@ -464,10 +454,9 @@ if calculate_btn:
         st.warning("请至少输入一个渠道的发货数据")
         st.stop()
     
-    # 找出最优
     best = min(results, key=lambda x: x[1])
     
-    st.markdown('<div class="sub-header">6. 比价结果</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">比价结果</div>', unsafe_allow_html=True)
     
     st.markdown(f"""
     <div class="best-channel">
@@ -489,13 +478,11 @@ if calculate_btn:
     for name, freight, details, fixed_fee, _ in results:
         if name == "send五仓" and details:
             st.markdown(f"**{name} 费用明细**")
-            
-            col_a, col_b, col_c = st.columns(3)
+            col_a, col_b = st.columns(2)
             with col_a:
                 st.metric("固定报关费", f"¥{fixed_fee:.2f}")
             with col_b:
                 st.metric("总运费", f"¥{freight:.2f}")
-            
             df_details = pd.DataFrame(details)
             st.dataframe(df_details, use_container_width=True, hide_index=True)
     
@@ -504,7 +491,6 @@ if calculate_btn:
         if name == "send单点" and extra:
             detail, inbound_fee = extra
             st.markdown(f"**{name} 费用明细**")
-            
             col_a, col_b, col_c = st.columns(3)
             with col_a:
                 st.metric("固定报关费", f"¥{fixed_fee:.2f}")
@@ -512,7 +498,6 @@ if calculate_btn:
                 st.metric("入库配置费", f"¥{inbound_fee:.2f}")
             with col_c:
                 st.metric("总运费", f"¥{freight:.2f}")
-            
             df_detail = pd.DataFrame([detail])
             st.dataframe(df_detail, use_container_width=True, hide_index=True)
 
@@ -520,4 +505,4 @@ elif not calculate_btn:
     st.info("请先输入发货数据，然后点击「开始比价」")
 
 st.markdown("---")
-st.caption("说明: AMP和AGL仓库固定；send按每个仓库密度自动判断走CBM还是kg；单点入库配置费按汇率7换算")
+st.caption(f"说明: 体积重系数 1 CBM = {VOLUME_WEIGHT_RATIO} kg；send单点入库配置费按汇率 1 USD = {USD_TO_CNY} CNY 换算")
